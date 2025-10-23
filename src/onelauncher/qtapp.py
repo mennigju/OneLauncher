@@ -27,6 +27,8 @@
 ###########################################################################
 import os
 import sys
+import shutil
+import subprocess
 from functools import cache
 from pathlib import Path
 
@@ -63,9 +65,91 @@ def _setup_qapplication() -> QtWidgets.QApplication:
     if os.name == "nt":
         application.setStyle("Fusion")
 
+    def _gnome_prefers_dark() -> bool:
+        # Simple heuristics for GNOME dark preference when Qt portal support is missing
+        try:
+            gtk_theme = os.environ.get("GTK_THEME", "")
+            if gtk_theme and "dark" in gtk_theme.lower():
+                return True
+            if shutil.which("gsettings"):
+                # GNOME 42+: color-scheme key
+                result = subprocess.run(
+                    [
+                        "gsettings",
+                        "get",
+                        "org.gnome.desktop.interface",
+                        "color-scheme",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=0.6,
+                )
+                if result.returncode == 0 and "prefer-dark" in result.stdout:
+                    return True
+                # Fallback to theme name check
+                result = subprocess.run(
+                    [
+                        "gsettings",
+                        "get",
+                        "org.gnome.desktop.interface",
+                        "gtk-theme",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=0.6,
+                )
+                if result.returncode == 0 and "dark" in result.stdout.lower():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _apply_fusion_dark_palette(app: QtWidgets.QApplication) -> None:
+        # Ensure a style that respects palette
+        app.setStyle("Fusion")
+        palette = QtGui.QPalette()
+        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor(53, 53, 53))
+        palette.setColor(
+            QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("white")
+        )
+        palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(42, 42, 42))
+        palette.setColor(
+            QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor(66, 66, 66)
+        )
+        palette.setColor(
+            QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("white")
+        )
+        palette.setColor(
+            QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("white")
+        )
+        palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("white"))
+        palette.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor(53, 53, 53))
+        palette.setColor(
+            QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("white")
+        )
+        palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("red"))
+        palette.setColor(QtGui.QPalette.ColorRole.Link, QtGui.QColor(42, 130, 218))
+        palette.setColor(
+            QtGui.QPalette.ColorRole.Highlight, QtGui.QColor(42, 130, 218)
+        )
+        palette.setColor(
+            QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("black")
+        )
+        app.setPalette(palette)
+
     def set_qtawesome_defaults() -> None:
         qtawesome.reset_cache()
         qtawesome.set_defaults(color=application.palette().windowText().color())
+
+    # Workaround: Some GNOME setups don’t expose dark preference to Qt. Apply dark palette if we detect it.
+    try:
+        if sys.platform.startswith("linux"):
+            cs = application.styleHints().colorScheme()
+            if cs == QtCore.Qt.ColorScheme.Light and _gnome_prefers_dark():
+                _apply_fusion_dark_palette(application)
+    except Exception:
+        # Never allow theme workaround to break startup
+        pass
 
     set_qtawesome_defaults()
     application.styleHints().colorSchemeChanged.connect(set_qtawesome_defaults)
